@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, CheckCircle, Circle, Award, BarChart2, Book, Activity } from 'lucide-react';
+import { db } from '../firebase';
+import { collection, doc, setDoc, getDoc, getDocs } from 'firebase/firestore';
 
 const HabitTracker = () => {
   // Initial state with sample data
@@ -7,61 +9,71 @@ const HabitTracker = () => {
     { id: 1, name: 'Exercise (30+ min)', category: 'Physical', completed: false, details: '', icon: 'Activity' },
     { id: 2, name: 'AI Agents Study', category: 'Learning', completed: false, details: '', icon: 'Book' },
     { id: 3, name: 'Algorithm Practice', category: 'Learning', completed: false, details: '', icon: 'Book' },
+    { id: 4, name: 'General Knowledge/Side projects', category: 'Learning', completed: false, details: '', icon: 'Book' },
   ]);
 
   const [achievements, setAchievements] = useState('');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [history, setHistory] = useState({});
   const [streaks, setStreaks] = useState({ exercise: 0, learning: 0 });
-
-  // Load data from localStorage on component mount
-  useEffect(() => {
-    const savedData = localStorage.getItem('habitTrackerData');
-    if (savedData) {
-      const { habits, achievements, history, streaks } = JSON.parse(savedData);
-      setHabits(habits);
-      setAchievements(achievements);
-      setHistory(history);
-      setStreaks(streaks);
-    }
-  }, []);
-
-  // Save data to localStorage whenever state changes
-  useEffect(() => {
-    localStorage.setItem('habitTrackerData', JSON.stringify({
-      habits,
-      achievements,
-      history,
-      streaks
-    }));
-  }, [habits, achievements, history, streaks]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // Format date as string key
   const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${currentDate.getDate()}`;
 
-  // Toggle habit completion
-  const toggleHabit = (id) => {
-    const updatedHabits = habits.map(habit =>
-      habit.id === id ? { ...habit, completed: !habit.completed } : habit
-    );
-    setHabits(updatedHabits);
+  // Load data from Firebase on component mount
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        // Load habits list
+        const habitsDoc = await getDoc(doc(db, 'habits', 'habitsList'));
+        if (habitsDoc.exists()) {
+          setHabits(habitsDoc.data().habits);
+        }
 
-    // Update history
-    const newHistory = { ...history };
-    if (!newHistory[dateKey]) {
-      newHistory[dateKey] = { habits: {}, achievements: '' };
+        // Load history
+        const historyCollection = collection(db, 'history');
+        const historySnapshot = await getDocs(historyCollection);
+        const historyData = {};
+
+        historySnapshot.forEach(doc => {
+          historyData[doc.id] = doc.data();
+        });
+
+        setHistory(historyData);
+
+        // Calculate streaks based on the loaded history
+        if (Object.keys(historyData).length > 0 && habits.length > 0) {
+          calculateStreaks(habits, historyData);
+        }
+
+        setLoading(false);
+      } catch (error) {
+        console.error("Error loading data from Firebase:", error);
+        setError("Failed to load your data. Please refresh the page and try again.");
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Save habits to Firebase whenever they change
+  useEffect(() => {
+    if (!loading) {
+      const saveHabits = async () => {
+        try {
+          await setDoc(doc(db, 'habits', 'habitsList'), { habits });
+        } catch (error) {
+          console.error("Error saving habits to Firebase:", error);
+          setError("Failed to save your habits. Please try again later.");
+        }
+      };
+
+      saveHabits();
     }
-
-    newHistory[dateKey].habits = updatedHabits.reduce((acc, habit) => {
-      acc[habit.id] = habit.completed;
-      return acc;
-    }, {});
-
-    setHistory(newHistory);
-
-    // Update streaks
-    calculateStreaks(updatedHabits, newHistory);
-  };
+  }, [habits, loading]);
 
   // Calculate streaks
   const calculateStreaks = (currentHabits, historyData) => {
@@ -100,7 +112,7 @@ const HabitTracker = () => {
       latestDate.setDate(latestDate.getDate() - 1);
 
       // Check exercise habits
-      const exerciseCompleted = Object.entries(dayData.habits).some(([id, completed]) => {
+      const exerciseCompleted = Object.entries(dayData.habits || {}).some(([id, completed]) => {
         const habit = currentHabits.find(h => h.id.toString() === id);
         return habit && habit.category === 'Physical' && completed;
       });
@@ -131,7 +143,7 @@ const HabitTracker = () => {
       latestDate.setDate(latestDate.getDate() - 1);
 
       // Check learning habits
-      const learningCompleted = Object.entries(dayData.habits).some(([id, completed]) => {
+      const learningCompleted = Object.entries(dayData.habits || {}).some(([id, completed]) => {
         const habit = currentHabits.find(h => h.id.toString() === id);
         return habit && habit.category === 'Learning' && completed;
       });
@@ -146,23 +158,89 @@ const HabitTracker = () => {
     setStreaks({ exercise: exerciseStreak, learning: learningStreak });
   };
 
+  // Toggle habit completion
+  const toggleHabit = async (id) => {
+    const updatedHabits = habits.map(habit =>
+      habit.id === id ? { ...habit, completed: !habit.completed } : habit
+    );
+    setHabits(updatedHabits);
+
+    // Update history
+    const newHistory = { ...history };
+    if (!newHistory[dateKey]) {
+      newHistory[dateKey] = { habits: {}, habitDetails: {}, achievements: '' };
+    }
+
+    newHistory[dateKey].habits = updatedHabits.reduce((acc, habit) => {
+      acc[habit.id] = habit.completed;
+      return acc;
+    }, {});
+
+    newHistory[dateKey].habitDetails = updatedHabits.reduce((acc, habit) => {
+      acc[habit.id] = habit.details;
+      return acc;
+    }, {});
+
+    setHistory(newHistory);
+
+    // Save to Firebase
+    try {
+      await setDoc(doc(db, 'history', dateKey), newHistory[dateKey]);
+
+      // Update streaks
+      calculateStreaks(updatedHabits, newHistory);
+    } catch (error) {
+      console.error("Error saving to Firebase:", error);
+      setError("Failed to save your progress. Please try again.");
+    }
+  };
+
   // Update habit details
-  const updateHabitDetails = (id, details) => {
+  const updateHabitDetails = async (id, details) => {
     const updatedHabits = habits.map(habit =>
       habit.id === id ? { ...habit, details } : habit
     );
     setHabits(updatedHabits);
+
+    // Update history
+    const newHistory = { ...history };
+    if (!newHistory[dateKey]) {
+      newHistory[dateKey] = { habits: {}, habitDetails: {}, achievements: '' };
+    }
+
+    newHistory[dateKey].habitDetails = updatedHabits.reduce((acc, habit) => {
+      acc[habit.id] = habit.details;
+      return acc;
+    }, {});
+
+    setHistory(newHistory);
+
+    // Save to Firebase
+    try {
+      await setDoc(doc(db, 'history', dateKey), newHistory[dateKey]);
+    } catch (error) {
+      console.error("Error saving details to Firebase:", error);
+      setError("Failed to save your notes. Please try again.");
+    }
   };
 
   // Save achievements
-  const saveAchievements = () => {
+  const saveAchievements = async () => {
     const newHistory = { ...history };
     if (!newHistory[dateKey]) {
-      newHistory[dateKey] = { habits: {}, achievements: '' };
+      newHistory[dateKey] = { habits: {}, habitDetails: {}, achievements: '' };
     }
 
     newHistory[dateKey].achievements = achievements;
     setHistory(newHistory);
+
+    // Save to Firebase
+    try {
+      await setDoc(doc(db, 'history', dateKey), newHistory[dateKey]);
+    } catch (error) {
+      console.error("Error saving achievements to Firebase:", error);
+      setError("Failed to save your achievements. Please try again.");
+    }
   };
 
   // Date navigation
@@ -177,20 +255,21 @@ const HabitTracker = () => {
     if (history[newDateKey]) {
       // Load habits from history
       const savedHabits = { ...history[newDateKey].habits };
+      const savedHabitDetails = history[newDateKey].habitDetails || {};
 
       const updatedHabits = habits.map(habit => ({
         ...habit,
         completed: savedHabits[habit.id] || false,
+        details: savedHabitDetails[habit.id] || '',
       }));
 
       setHabits(updatedHabits);
       setAchievements(history[newDateKey].achievements || '');
     } else {
-      // Reset for new date
+      // Reset for new date without clearing details
       const resetHabits = habits.map(habit => ({
         ...habit,
         completed: false,
-        details: '',
       }));
 
       setHabits(resetHabits);
@@ -199,7 +278,7 @@ const HabitTracker = () => {
   };
 
   // Add new habit
-  const addHabit = () => {
+  const addHabit = async () => {
     const newId = Math.max(0, ...habits.map(h => h.id)) + 1;
     const newHabit = {
       id: newId,
@@ -209,12 +288,19 @@ const HabitTracker = () => {
       details: '',
       icon: 'Circle'
     };
-    setHabits([...habits, newHabit]);
+
+    const updatedHabits = [...habits, newHabit];
+    setHabits(updatedHabits);
+
+    // Save will happen in the useEffect
   };
 
   // Delete habit
-  const deleteHabit = (id) => {
-    setHabits(habits.filter(habit => habit.id !== id));
+  const deleteHabit = async (id) => {
+    const updatedHabits = habits.filter(habit => habit.id !== id);
+    setHabits(updatedHabits);
+
+    // Save will happen in the useEffect
   };
 
   // Render icon component based on string name
@@ -245,6 +331,31 @@ const HabitTracker = () => {
     return Math.round((completed / habits.length) * 100);
   };
 
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <p className="text-xl font-medium text-indigo-700">Loading your habits...</p>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+        <p className="text-xl font-medium text-red-600 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+        >
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
+
+  // Main render
   return (
     <div className="flex flex-col min-h-screen bg-gray-50 p-4 max-w-3xl mx-auto">
       <header className="mb-6">
@@ -412,7 +523,7 @@ const HabitTracker = () => {
       </div>
 
       <footer className="mt-auto text-center text-sm text-gray-500 pt-8">
-        <p>Your data is saved locally in your browser.</p>
+        <p>Your data is saved securely in the cloud.</p>
         <p className="mt-1">Keep tracking your progress to build lasting habits!</p>
       </footer>
     </div>
