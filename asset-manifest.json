@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/habit-tracker/static/css/main.dc4d6ff2.css",
+    "main.js": "/habit-tracker/static/js/main.32ae69c4.js",
+    "static/js/453.6f276dca.chunk.js": "/habit-tracker/static/js/453.6f276dca.chunk.js",
+    "index.html": "/habit-tracker/index.html",
+    "main.dc4d6ff2.css.map": "/habit-tracker/static/css/main.dc4d6ff2.css.map",
+    "main.32ae69c4.js.map": "/habit-tracker/static/js/main.32ae69c4.js.map",
+    "453.6f276dca.chunk.js.map": "/habit-tracker/static/js/453.6f276dca.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.dc4d6ff2.css",
+    "static/js/main.32ae69c4.js"
+  ]
+}
